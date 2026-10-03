@@ -1,8 +1,9 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const { Player } = require('discord-player');
-const { DefaultExtractors } = require('@discord-player/extractor'); // Dodana nova linija
+const { DefaultExtractors } = require('@discord-player/extractor');
 
+// Inicijalizacija Discord klijenta sa potrebnim dozvolama
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -12,11 +13,29 @@ const client = new Client({
     ]
 });
 
-// Inicijalizacija muzičkog plejera
-const player = new Player(client);
+// Inicijalizacija muzičkog plejera sa opcijama za stabilniju reprodukciju
+const player = new Player(client, {
+    ytdlOptions: {
+        filter: 'audioonly',
+        highWaterMark: 1 << 25,
+        quality: 'highestaudio'
+    }
+});
 
-// Učitavanje ekstrakcija na novi način
+// Učitavanje ekstrakcija izvora zvuka (YouTube, Spotify, SoundCloud, itd.)
 player.extractors.loadMulti(DefaultExtractors);
+
+// Praćenje grešaka unutar plejera kako bot ne bi izlazio iz kanala pri grešci
+player.events.on('error', (queue, error) => {
+    console.log(`[Greška u redu]: ${error.message}`);
+});
+
+player.events.on('playerError', (queue, error, track) => {
+    console.log(`[Greška pri reprodukciji]: ${error.message}`);
+    if (queue.metadata) {
+        queue.metadata.send(`Došlo je do greške pri reprodukciji pjesme: **${track.title}**`);
+    }
+});
 
 client.once('ready', () => {
     console.log(`Bot je mrežan! Prijavljen kao ${client.user.tag}`);
@@ -30,27 +49,30 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Projera da li je korisnik u glasovnom kanalu
-    const voiceChannel = message.member.voice.channel;
-
+    // Komanda za puštanje muzike
     if (command === 'play' || command === 'p') {
+        const voiceChannel = message.member.voice.channel;
         if (!voiceChannel) return message.reply('Morate biti u glasovnom kanalu!');
+
         const query = args.join(' ');
         if (!query) return message.reply('Unesite naziv pjesme ili URL!');
 
         const queue = player.nodes.create(message.guild, {
-            metadata: message.channel
+            metadata: message.channel,
+            leaveOnEnd: false,
+            leaveOnEmpty: true,
+            leaveOnEmptyCooldown: 300000 // Izlazi iz kanala tek nakon 5 minuta prazne sobe
         });
 
         try {
             if (!queue.connection) await queue.connect(voiceChannel);
-        } catch {
+        } catch (err) {
             queue.delete();
             return message.reply('Ne mogu se pridružiti vašem glasovnom kanalu!');
         }
 
         const result = await player.search(query, { requestedBy: message.author });
-        if (!result.tracks.length) return message.reply('Pjesma nije pronađena!');
+        if (!result || !result.tracks.length) return message.reply('Pjesma nije pronađena!');
 
         result.playlist ? queue.addTrack(result.tracks) : queue.addTrack(result.tracks[0]);
         if (!queue.node.isPlaying()) await queue.node.play();
