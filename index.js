@@ -1,9 +1,8 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
-const { Player } = require('discord-player');
+const { Player, QueryType } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
 
-// Inicijalizacija Discord klijenta sa potrebnim dozvolama
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -13,7 +12,6 @@ const client = new Client({
     ]
 });
 
-// Inicijalizacija muzičkog plejera sa opcijama za stabilniju reprodukciju
 const player = new Player(client, {
     ytdlOptions: {
         filter: 'audioonly',
@@ -22,10 +20,8 @@ const player = new Player(client, {
     }
 });
 
-// Učitavanje ekstrakcija izvora zvuka (YouTube, Spotify, SoundCloud, itd.)
 player.extractors.loadMulti(DefaultExtractors);
 
-// Praćenje grešaka unutar plejera kako bot ne bi izlazio iz kanala pri grešci
 player.events.on('error', (queue, error) => {
     console.log(`[Greška u redu]: ${error.message}`);
 });
@@ -33,7 +29,7 @@ player.events.on('error', (queue, error) => {
 player.events.on('playerError', (queue, error, track) => {
     console.log(`[Greška pri reprodukciji]: ${error.message}`);
     if (queue.metadata) {
-        queue.metadata.send(`Došlo je do greške pri reprodukciji pjesme: **${track.title}**`);
+        queue.metadata.send(`Došlo je do greške pri reprodukciji: **${track.title}**`);
     }
 });
 
@@ -49,7 +45,6 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Komanda za puštanje muzike
     if (command === 'play' || command === 'p') {
         const voiceChannel = message.member.voice.channel;
         if (!voiceChannel) return message.reply('Morate biti u glasovnom kanalu!');
@@ -61,7 +56,7 @@ client.on('messageCreate', async (message) => {
             metadata: message.channel,
             leaveOnEnd: false,
             leaveOnEmpty: true,
-            leaveOnEmptyCooldown: 300000 // Izlazi iz kanala tek nakon 5 minuta prazne sobe
+            leaveOnEmptyCooldown: 300000
         });
 
         try {
@@ -71,8 +66,15 @@ client.on('messageCreate', async (message) => {
             return message.reply('Ne mogu se pridružiti vašem glasovnom kanalu!');
         }
 
-        const result = await player.search(query, { requestedBy: message.author });
-        if (!result || !result.tracks.length) return message.reply('Pjesma nije pronađena!');
+        // Primarno pretraživanje preko SoundCloud-a radi izbjegavanja YouTube IP blokada
+        const result = await player.search(query, {
+            requestedBy: message.author,
+            searchEngine: QueryType.SOUNDCLOUD_SEARCH
+        });
+
+        if (!result || !result.tracks.length) {
+            return message.reply('Pjesma nije pronađena na SoundCloud-u!');
+        }
 
         result.playlist ? queue.addTrack(result.tracks) : queue.addTrack(result.tracks[0]);
         if (!queue.node.isPlaying()) await queue.node.play();
@@ -87,31 +89,26 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // Komanda za pauziranje
     if (command === 'pause') {
         queue.node.pause();
         return message.reply('Muzika je pauzirana.');
     }
 
-    // Komanda za nastavak
     if (command === 'resume') {
         queue.node.resume();
         return message.reply('Muzika je nastavljena.');
     }
 
-    // Komanda za preskakanje pjesme
     if (command === 'skip') {
         queue.node.skip();
         return message.reply('Pjesma je preskočena!');
     }
 
-    // Komanda za zaustavljanje i izlazak
     if (command === 'stop') {
         queue.delete();
         return message.reply('Muzika je zaustavljena i lista je očišćena.');
     }
 
-    // Komanda za pregled liste čekanja
     if (command === 'queue') {
         const tracks = queue.tracks.toArray();
         const currentTrack = queue.currentTrack;
